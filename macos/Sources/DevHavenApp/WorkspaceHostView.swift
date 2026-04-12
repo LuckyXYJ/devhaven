@@ -66,31 +66,34 @@ struct WorkspaceHostView: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                WorkspaceRunToolbarView(
-                    configurations: runToolbarState.configurations,
-                    selectedConfigurationID: runToolbarState.selectedConfigurationID,
-                    canRun: runToolbarState.canRun,
-                    canStop: runToolbarState.canStop,
-                    hasSessions: runToolbarState.hasSessions,
-                    isLogsVisible: runToolbarState.isLogsVisible,
-                    onSelectConfiguration: { viewModel.selectWorkspaceRunConfiguration($0, in: project.path) },
-                    onRun: {
-                        do {
-                            try viewModel.runSelectedWorkspaceConfiguration(in: project.path)
-                        } catch {
-                            // 错误已由 ViewModel 收口
-                        }
-                    },
-                    onStop: { viewModel.stopSelectedWorkspaceRunSession(in: project.path) },
-                    onToggleLogs: { viewModel.toggleWorkspaceRunConsole(in: project.path) },
-                    onConfigure: { isRunConfigurationSheetPresented = true }
-                )
+                if viewModel.supportsWorkspaceRun {
+                    WorkspaceRunToolbarView(
+                        configurations: runToolbarState.configurations,
+                        selectedConfigurationID: runToolbarState.selectedConfigurationID,
+                        canRun: runToolbarState.canRun,
+                        canStop: runToolbarState.canStop,
+                        hasSessions: runToolbarState.hasSessions,
+                        isLogsVisible: runToolbarState.isLogsVisible,
+                        onSelectConfiguration: { viewModel.selectWorkspaceRunConfiguration($0, in: project.path) },
+                        onRun: {
+                            do {
+                                try viewModel.runSelectedWorkspaceConfiguration(in: project.path)
+                            } catch {
+                                // 错误已由 ViewModel 收口
+                            }
+                        },
+                        onStop: { viewModel.stopSelectedWorkspaceRunSession(in: project.path) },
+                        onToggleLogs: { viewModel.toggleWorkspaceRunConsole(in: project.path) },
+                        onConfigure: { isRunConfigurationSheetPresented = true }
+                    )
+                }
             }
 
             workspacePresentedContent(selectedPresentedTab)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let runConsoleState = viewModel.workspaceRunConsoleState(for: project.path),
+            if viewModel.supportsWorkspaceRun,
+               let runConsoleState = viewModel.workspaceRunConsoleState(for: project.path),
                runConsoleState.isVisible,
                !runConsoleState.sessions.isEmpty {
                 runConsoleSection(runConsoleState: runConsoleState)

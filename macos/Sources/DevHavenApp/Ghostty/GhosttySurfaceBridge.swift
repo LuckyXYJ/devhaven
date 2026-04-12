@@ -93,7 +93,7 @@ final class GhosttySurfaceBridge {
             return true
 
         case GHOSTTY_ACTION_RENDERER_HEALTH:
-            let healthy = action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_OK
+            let healthy = action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_HEALTHY
             guard state.rendererHealthy != healthy else {
                 return true
             }

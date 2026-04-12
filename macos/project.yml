@@ -1,0 +1,168 @@
+name: DevHavenNative
+options:
+  createIntermediateGroups: true
+configs:
+  Debug: debug
+  Release: release
+  AppStoreDebug: debug
+  AppStoreRelease: release
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "6.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.devhaven
+    CURRENT_PROJECT_VERSION: "3011000"
+    MARKETING_VERSION: "3.1.10"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    ASSETCATALOG_COMPILER_APPICON_NAME: DevHaven
+    ENABLE_HARDENED_RUNTIME: YES
+    LD_RUNPATH_SEARCH_PATHS:
+      - "$(inherited)"
+      - "@executable_path/../Frameworks"
+    OTHER_LDFLAGS:
+      - "$(inherited)"
+      - "-lc++"
+targets:
+  DevHavenCore:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/DevHavenCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devhaven.core
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+  DevHavenCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/DevHavenCLI
+    dependencies:
+      - target: DevHavenCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devhaven.cli
+        GENERATE_INFOPLIST_FILE: YES
+  DevHavenApp:
+    type: application
+    platform: macOS
+    info:
+      path: Resources/Info-Direct.plist
+    entitlements:
+      path: DevHaven-Direct.entitlements
+    sources:
+      - path: Sources/DevHavenApp
+        excludes:
+          - GhosttyResources
+          - AgentResources
+      - path: Resources/DevHaven.icns
+        buildPhase: resources
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - target: DevHavenCore
+      - target: DevHavenCLI
+        embed: true
+      - framework: Vendor/GhosttyKit.xcframework
+        embed: false
+      - framework: Vendor/Sparkle.xcframework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devhaven
+        PRODUCT_NAME: DevHaven
+        INFOPLIST_KEY_CFBundleDisplayName: DevHaven
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS:
+          - "$(inherited)"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-framework"
+          - "Carbon"
+    postBuildScripts:
+      - name: Copy Runtime Resources
+        script: |
+          set -euo pipefail
+          resources_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          rm -rf "${resources_dir}/GhosttyResources" "${resources_dir}/AgentResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/GhosttyResources" "${resources_dir}/GhosttyResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/AgentResources" "${resources_dir}/AgentResources"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GhosttyResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AgentResources"
+  DevHavenAppStore:
+    type: application
+    platform: macOS
+    info:
+      path: Resources/Info-AppStore.plist
+    entitlements:
+      path: DevHaven-AppStore.entitlements
+    sources:
+      - path: Sources/DevHavenApp
+        excludes:
+          - GhosttyResources
+          - AgentResources
+      - path: Resources/DevHaven.icns
+        buildPhase: resources
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - target: DevHavenCore
+      - framework: Vendor/GhosttyKit.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.devhaven
+        PRODUCT_NAME: DevHaven
+        INFOPLIST_KEY_CFBundleDisplayName: DevHaven
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS:
+          - "$(inherited)"
+          - DEVHAVEN_APPSTORE
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-framework"
+          - "Carbon"
+    postBuildScripts:
+      - name: Copy Runtime Resources
+        script: |
+          set -euo pipefail
+          resources_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          rm -rf "${resources_dir}/GhosttyResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/GhosttyResources" "${resources_dir}/GhosttyResources"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GhosttyResources"
+  DevHavenCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/DevHavenCoreTests
+    dependencies:
+      - target: DevHavenCore
+  DevHavenAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/DevHavenAppTests
+    dependencies:
+      - target: DevHavenApp
+      - target: DevHavenCore
+schemes:
+  DevHaven Direct:
+    build:
+      targets:
+        DevHavenApp: all
+        DevHavenCLI: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  DevHaven App Store:
+    build:
+      targets:
+        DevHavenAppStore: all
+    run:
+      config: AppStoreDebug
+    archive:
+      config: AppStoreRelease

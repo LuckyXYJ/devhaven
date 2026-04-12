@@ -159,11 +159,20 @@ enum GhosttyRuntimeEnvironmentBuilder {
     ) -> [String: String] {
         var environment = baseEnvironment
         let signalDirectory = store.agentStatusSessionsDirectoryURL
-        environment["DEVHAVEN_AGENT_SIGNAL_DIR"] = signalDirectory.path
         environment["DEVHAVEN_CLI_CONTROL_DIR"] = store.cliControlV1DirectoryURL.path
+        let capabilities = DevHavenDistribution.current.capabilities
 
-        if let cliHelperURL {
+        if capabilities.supportsAgentEnvironmentInjection {
+            environment["DEVHAVEN_AGENT_SIGNAL_DIR"] = signalDirectory.path
+        }
+
+        if capabilities.supportsCLIHelperInjection, let cliHelperURL {
             environment["DEVHAVEN_CLI_HELPER"] = cliHelperURL.path
+        }
+
+        guard capabilities.supportsAgentEnvironmentInjection else {
+            injectWorkspaceContextIfPresent(into: &environment)
+            return environment
         }
 
         guard let agentResourcesURL else {

@@ -413,15 +413,16 @@ final class GhosttyRuntime {
         _ userdata: UnsafeMutableRawPointer?,
         location: ghostty_clipboard_e,
         state: UnsafeMutableRawPointer?
-    ) {
+    ) -> Bool {
         guard let bridge = callbackContext(from: userdata)?.activeBridge(),
               let surface = bridge.surface else {
-            return
+            return false
         }
         let string = NSPasteboard.ghostty(location)?.getOpinionatedStringContents() ?? ""
         string.withCString { pointer in
             ghostty_surface_complete_clipboard_request(surface, pointer, state, false)
         }
+        return true
     }
 
     nonisolated private static func handleConfirmReadClipboard(

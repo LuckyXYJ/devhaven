@@ -48,6 +48,7 @@ struct DevHavenApp: App {
     @State private var viewModel = Self.makeViewModel()
     @StateObject private var updateController = DevHavenUpdateController()
     @StateObject private var quitGuard = AppQuitGuard()
+    private let distribution = DevHavenDistribution.current
 
     init() {
         _ = GhosttyAppRuntime.shared.runtime
@@ -91,13 +92,15 @@ struct DevHavenApp: App {
 
                 Divider()
 
-                Button("检查更新") {
-                    updateController.checkForUpdates()
-                }
-                .keyboardShortcut("u", modifiers: [.command, .shift])
-                .disabled(!updateController.isSupported)
+                if distribution.capabilities.supportsExternalUpdater {
+                    Button("检查更新") {
+                        updateController.checkForUpdates()
+                    }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                    .disabled(!updateController.isSupported)
 
-                Divider()
+                    Divider()
+                }
 
                 Button("设置") {
                     viewModel.revealSettings()
@@ -128,22 +131,29 @@ struct DevHavenApp: App {
 
     private static func makeViewModel() -> NativeAppViewModel {
         let store = LegacyCompatStore()
-        let runManager = WorkspaceRunManager(
-            logStore: WorkspaceRunLogStore(baseDirectoryURL: FileManager.default.homeDirectoryForCurrentUser),
-            environmentResolver: { request, processEnvironment in
-                let baseEnvironment = WorkspaceRunManager.defaultEnvironment(
-                    for: request,
-                    processEnvironment: processEnvironment
-                )
-                return GhosttyRuntimeEnvironmentBuilder.build(
-                    baseEnvironment: baseEnvironment,
-                    processEnvironment: processEnvironment
-                )
-            }
-        )
+        let distribution = DevHavenDistribution.current
+        let runManager: any WorkspaceRunManaging
+        if distribution.capabilities.supportsWorkspaceRun {
+            runManager = WorkspaceRunManager(
+                logStore: WorkspaceRunLogStore(baseDirectoryURL: FileManager.default.homeDirectoryForCurrentUser),
+                environmentResolver: { request, processEnvironment in
+                    let baseEnvironment = WorkspaceRunManager.defaultEnvironment(
+                        for: request,
+                        processEnvironment: processEnvironment
+                    )
+                    return GhosttyRuntimeEnvironmentBuilder.build(
+                        baseEnvironment: baseEnvironment,
+                        processEnvironment: processEnvironment
+                    )
+                }
+            )
+        } else {
+            runManager = DisabledWorkspaceRunManager()
+        }
         return NativeAppViewModel(
             store: store,
-            runManager: runManager
+            runManager: runManager,
+            distribution: distribution
         )
     }
 }

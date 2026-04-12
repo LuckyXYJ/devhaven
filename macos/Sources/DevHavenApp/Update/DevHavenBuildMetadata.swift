@@ -12,9 +12,14 @@ struct DevHavenBuildMetadata: Equatable {
     let sparklePublicKey: String?
     let updateDeliveryMode: DevHavenUpdateDeliveryMode
     let isAppBundle: Bool
+    let distribution: DevHavenDistribution
+
+    private var supportsExternalUpdater: Bool {
+        distribution.capabilities.supportsExternalUpdater
+    }
 
     var supportsUpdateChecks: Bool {
-        isAppBundle && stableFeedURL != nil && nightlyFeedURL != nil
+        supportsExternalUpdater && isAppBundle && stableFeedURL != nil && nightlyFeedURL != nil
     }
 
     var supportsAutomaticUpdates: Bool {
@@ -69,7 +74,8 @@ struct DevHavenBuildMetadata: Equatable {
             nightlyDownloadsPageURL: nightlyDownloadsPageURL,
             sparklePublicKey: sparklePublicKey,
             updateDeliveryMode: updateDeliveryMode,
-            isAppBundle: isAppBundle
+            isAppBundle: isAppBundle,
+            distribution: .current
         )
     }
 }

@@ -1,7 +1,9 @@
 import AppKit
 import Combine
 import Foundation
+#if canImport(Sparkle) && !DEVHAVEN_APPSTORE
 @preconcurrency import Sparkle
+#endif
 import DevHavenCore
 
 @MainActor
@@ -11,7 +13,9 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
 
     private let delegateBridge: DevHavenSparkleUpdaterDelegate
     private var currentSettings: AppSettings
+#if canImport(Sparkle) && !DEVHAVEN_APPSTORE
     private var updaterController: SPUStandardUpdaterController?
+#endif
     private var didStartUpdater = false
     private var latestResolvedDownloadURL: URL?
     private var manualCheckTask: Task<Void, Never>?
@@ -51,11 +55,13 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
             return
         }
 
+#if canImport(Sparkle) && !DEVHAVEN_APPSTORE
         updaterController = SPUStandardUpdaterController(
             startingUpdater: false,
             updaterDelegate: delegateBridge,
             userDriverDelegate: nil
         )
+#endif
     }
 
     var isSupported: Bool {
@@ -76,6 +82,9 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
         }
         if metadata.supportsAutomaticUpdates {
             return "当前构建支持自动升级。"
+        }
+        if metadata.distribution == .appStore {
+            return "App Store 版本通过 App Store 分发更新；Sparkle 与外部分发通道已禁用。"
         }
         return "当前构建仅支持检查新版本并打开下载页；由于未启用 Apple Developer ID / notarization，自动安装更新已关闭。"
     }
@@ -105,6 +114,7 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
             return
         }
 
+#if canImport(Sparkle) && !DEVHAVEN_APPSTORE
         guard let updater = updaterController?.updater else {
             return
         }
@@ -123,6 +133,7 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
 
         updater.automaticallyChecksForUpdates = settings.updateAutomaticallyChecks
         updater.automaticallyDownloadsUpdates = settings.updateAutomaticallyDownloads
+#endif
     }
 
     func checkForUpdates() {
@@ -169,6 +180,7 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
             return
         }
 
+#if canImport(Sparkle) && !DEVHAVEN_APPSTORE
         guard let updater = updaterController?.updater else {
             diagnostics.lastStatusMessage = supportDescription
             return
@@ -186,6 +198,9 @@ final class DevHavenUpdateController: NSObject, ObservableObject {
         }
 
         updater.checkForUpdates()
+#else
+        diagnostics.lastStatusMessage = supportDescription
+#endif
     }
 
     private func startManualUpdateCheck(userInitiated: Bool) {
@@ -307,6 +322,7 @@ private enum DevHavenSparkleDelegateEvent {
     case willRelaunchApplication
 }
 
+#if canImport(Sparkle) && !DEVHAVEN_APPSTORE
 private final class DevHavenSparkleUpdaterDelegateState: @unchecked Sendable {
     private let lock = NSLock()
     private var metadata: DevHavenBuildMetadata
@@ -380,3 +396,12 @@ private final class DevHavenSparkleUpdaterDelegate: NSObject, SPUUpdaterDelegate
         onEvent?(.willRelaunchApplication)
     }
 }
+#else
+private final class DevHavenSparkleUpdaterDelegate {
+    var onEvent: ((DevHavenSparkleDelegateEvent) -> Void)?
+
+    init(metadata: DevHavenBuildMetadata, settings: AppSettings) {}
+
+    func update(metadata: DevHavenBuildMetadata, settings: AppSettings) {}
+}
+#endif

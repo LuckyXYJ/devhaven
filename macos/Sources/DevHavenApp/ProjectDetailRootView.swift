@@ -169,27 +169,29 @@ struct ProjectDetailRootView: View {
                         }
                     }
 
-                    section("运行配置") {
-                        if project.runConfigurations.isEmpty {
-                            Text("暂无运行配置")
-                                .font(.caption)
-                                .foregroundStyle(NativeTheme.textSecondary)
-                        } else {
-                            VStack(spacing: 10) {
-                                ForEach(project.runConfigurations) { configuration in
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(configuration.name)
-                                            .font(.headline)
-                                            .foregroundStyle(NativeTheme.textPrimary)
-                                        Text(projectRunConfigurationDetailSummary(configuration))
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(NativeTheme.textSecondary)
-                                            .textSelection(.enabled)
+                    if viewModel.supportsWorkspaceRun {
+                        section("运行配置") {
+                            if project.runConfigurations.isEmpty {
+                                Text("暂无运行配置")
+                                    .font(.caption)
+                                    .foregroundStyle(NativeTheme.textSecondary)
+                            } else {
+                                VStack(spacing: 10) {
+                                    ForEach(project.runConfigurations) { configuration in
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(configuration.name)
+                                                .font(.headline)
+                                                .foregroundStyle(NativeTheme.textPrimary)
+                                            Text(projectRunConfigurationDetailSummary(configuration))
+                                                .font(.caption.monospaced())
+                                                .foregroundStyle(NativeTheme.textSecondary)
+                                                .textSelection(.enabled)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(12)
+                                        .background(Color.white.opacity(0.04))
+                                        .clipShape(.rect(cornerRadius: 10))
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(12)
-                                    .background(Color.white.opacity(0.04))
-                                    .clipShape(.rect(cornerRadius: 10))
                                 }
                             }
                         }

@@ -13,9 +13,9 @@ final class GhosttyAppRuntime {
     private var sharedRuntime: GhosttyRuntime?
 
     init(bundle: Bundle? = nil) {
-        let resolvedBundle = bundle ?? Self.resolveResourceBundle()
-        let rootURL = resolvedBundle?.resourceURL?.appending(path: "GhosttyResources", directoryHint: .isDirectory)
-        let resourcesURL = rootURL?.appending(path: "ghostty", directoryHint: .isDirectory)
+        let resourcesURL = DevHavenAppResourceLocator.resolveGhosttyResourcesRootURL(
+            mainBundle: bundle ?? .main
+        )?.appending(path: "ghostty", directoryHint: .isDirectory)
         if let resourcesURL, FileManager.default.fileExists(atPath: resourcesURL.path) {
             self.resourcesDirectoryURL = resourcesURL
         } else {

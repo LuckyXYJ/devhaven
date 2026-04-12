@@ -153,6 +153,7 @@ public final class NativeAppViewModel {
     @ObservationIgnored private let runManager: any WorkspaceRunManaging
     @ObservationIgnored private let workspaceRestoreCoordinator: WorkspaceRestoreCoordinator
     @ObservationIgnored private let workspaceAlignmentRootStore: WorkspaceAlignmentRootStore
+    @ObservationIgnored private let distributionCapabilities: DevHavenDistributionCapabilities
     @ObservationIgnored private var workspacePaneSnapshotProvider: WorkspacePaneSnapshotProvider?
     @ObservationIgnored private var projectDocumentLoadTask: Task<Void, Never>?
     @ObservationIgnored private var projectNotesSummaryBackfillTask: Task<Void, Never>?
@@ -352,6 +353,7 @@ public final class NativeAppViewModel {
         runManager: (any WorkspaceRunManaging)? = nil,
         workspaceRestoreStore: WorkspaceRestoreStore? = nil,
         workspaceAlignmentRootStore: WorkspaceAlignmentRootStore? = nil,
+        distribution: DevHavenDistribution = .current,
         workspaceRestoreAutosaveDelayNanoseconds: UInt64 = 400_000_000
     ) {
         self.store = store
@@ -381,6 +383,7 @@ public final class NativeAppViewModel {
         self.workspaceAlignmentRootStore = workspaceAlignmentRootStore ?? WorkspaceAlignmentRootStore(
             baseDirectoryURL: store.workspaceRootsDirectoryURL
         )
+        self.distributionCapabilities = distribution.capabilities
         self.workspacePaneSnapshotProvider = nil
         self.snapshot = NativeAppSnapshot()
         self.selectedProjectPath = nil
@@ -451,6 +454,14 @@ public final class NativeAppViewModel {
 
     public var workspaceSidebarWidth: Double {
         snapshot.appState.settings.workspaceSidebarWidth
+    }
+
+    public var supportsWorkspaceRun: Bool {
+        distributionCapabilities.supportsWorkspaceRun
+    }
+
+    public var currentDistribution: DevHavenDistribution {
+        distributionCapabilities.distribution
     }
 
     public var visibleProjects: [Project] {
@@ -815,6 +826,9 @@ public final class NativeAppViewModel {
     }
 
     public func workspaceRunToolbarState(for projectPath: String? = nil) -> WorkspaceRunToolbarState {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return WorkspaceRunToolbarState()
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath) else {
             return WorkspaceRunToolbarState()
         }
@@ -846,6 +860,16 @@ public final class NativeAppViewModel {
     }
 
     public func runSelectedWorkspaceConfiguration(in projectPath: String? = nil) throws {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            let message = "App Store 版本已禁用运行配置与外部命令执行。"
+            let error = NSError(
+                domain: "DevHavenCore.WorkspaceRunConfiguration",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+            errorMessage = message
+            throw error
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               let session = openWorkspaceSessions.first(where: { $0.projectPath == projectPath }),
               let configuration = selectedWorkspaceRunConfiguration(in: projectPath)
@@ -962,6 +986,9 @@ public final class NativeAppViewModel {
     }
 
     public func stopSelectedWorkspaceRunSession(in projectPath: String? = nil) {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               let state = workspaceRunConsoleStateByProjectPath[projectPath],
               let sessionID = state.selectedSession?.id
@@ -972,6 +999,9 @@ public final class NativeAppViewModel {
     }
 
     public func toggleWorkspaceRunConsole(in projectPath: String? = nil) {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               var state = workspaceRunConsoleStateByProjectPath[projectPath]
         else {
@@ -982,6 +1012,9 @@ public final class NativeAppViewModel {
     }
 
     public func updateWorkspaceRunConsolePanelHeight(_ height: Double, in projectPath: String? = nil) {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               var state = workspaceRunConsoleStateByProjectPath[projectPath]
         else {
@@ -992,6 +1025,9 @@ public final class NativeAppViewModel {
     }
 
     public func clearSelectedWorkspaceRunConsoleBuffer(in projectPath: String? = nil) {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               var state = workspaceRunConsoleStateByProjectPath[projectPath],
               let selectedSessionID = state.selectedSession?.id,
@@ -1004,6 +1040,9 @@ public final class NativeAppViewModel {
     }
 
     public func openSelectedWorkspaceRunLog(in projectPath: String? = nil) throws {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               let state = workspaceRunConsoleStateByProjectPath[projectPath],
               let path = state.selectedSession?.logFilePath
@@ -1020,6 +1059,16 @@ public final class NativeAppViewModel {
     }
 
     public func saveWorkspaceRunConfigurations(_ runConfigurations: [ProjectRunConfiguration], in projectPath: String? = nil) throws {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            let message = "App Store 版本不提供运行配置编辑。"
+            let error = NSError(
+                domain: "DevHavenCore.WorkspaceRunConfiguration",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+            errorMessage = message
+            throw error
+        }
         guard let projectPath = resolveWorkspaceRunProjectPath(projectPath),
               let ownerProjectPath = resolveWorkspaceScriptOwnerProjectPath(for: projectPath),
               let ownerIndex = snapshot.projects.firstIndex(where: {
@@ -8207,6 +8256,9 @@ public final class NativeAppViewModel {
     }
 
     private func resolvedWorkspaceRunConfigurations(for projectPath: String) -> [WorkspaceRunConfiguration] {
+        guard distributionCapabilities.supportsWorkspaceRun else {
+            return []
+        }
         guard let session = openWorkspaceSessions.first(where: { $0.projectPath == projectPath }),
               let project = resolveDisplayProject(for: projectPath)
         else {
