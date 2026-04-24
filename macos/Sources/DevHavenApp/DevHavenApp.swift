@@ -64,6 +64,7 @@ struct DevHavenApp: App {
                 .frame(minWidth: 1280, minHeight: 820)
         }
         .defaultSize(width: 1480, height: 920)
+        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("新建工作区标签") {
