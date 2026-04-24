@@ -50,3 +50,8 @@ macos/Vendor/CodeEditPackages/
 macos/Vendor/Sparkle.xcframework/
 macos/Vendor/SparkleTools/
 .omx/
+
+# Xcode user state
+*.xcuserstate
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
