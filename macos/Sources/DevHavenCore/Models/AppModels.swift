@@ -50,6 +50,16 @@ public struct GitIdentity: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+public struct SecurityScopedBookmarkRecord: Codable, Equatable, Sendable {
+    public var path: String
+    public var bookmarkDataBase64: String
+
+    public init(path: String, bookmarkDataBase64: String) {
+        self.path = path
+        self.bookmarkDataBase64 = bookmarkDataBase64
+    }
+}
+
 public enum ProjectListViewMode: String, Codable, Sendable, CaseIterable {
     case card
     case list
@@ -389,6 +399,7 @@ public struct AppStateFile: Codable, Equatable, Sendable {
     public var tags: [TagData]
     public var directories: [String]
     public var directProjectPaths: [String]
+    public var securityScopedBookmarks: [SecurityScopedBookmarkRecord]
     public var recycleBin: [String]
     public var favoriteProjectPaths: [String]
     public var workspaceAlignmentGroups: [WorkspaceAlignmentGroupDefinition]
@@ -399,6 +410,7 @@ public struct AppStateFile: Codable, Equatable, Sendable {
         tags: [TagData] = [],
         directories: [String] = [],
         directProjectPaths: [String] = [],
+        securityScopedBookmarks: [SecurityScopedBookmarkRecord] = [],
         recycleBin: [String] = [],
         favoriteProjectPaths: [String] = [],
         workspaceAlignmentGroups: [WorkspaceAlignmentGroupDefinition] = [],
@@ -408,6 +420,7 @@ public struct AppStateFile: Codable, Equatable, Sendable {
         self.tags = tags
         self.directories = directories
         self.directProjectPaths = directProjectPaths
+        self.securityScopedBookmarks = securityScopedBookmarks
         self.recycleBin = recycleBin
         self.favoriteProjectPaths = favoriteProjectPaths
         self.workspaceAlignmentGroups = workspaceAlignmentGroups
@@ -419,6 +432,7 @@ public struct AppStateFile: Codable, Equatable, Sendable {
         case tags
         case directories
         case directProjectPaths
+        case securityScopedBookmarks
         case recycleBin
         case favoriteProjectPaths
         case workspaceAlignmentGroups
@@ -431,6 +445,7 @@ public struct AppStateFile: Codable, Equatable, Sendable {
         self.tags = try container.decodeIfPresent([TagData].self, forKey: .tags) ?? []
         self.directories = try container.decodeIfPresent([String].self, forKey: .directories) ?? []
         self.directProjectPaths = try container.decodeIfPresent([String].self, forKey: .directProjectPaths) ?? []
+        self.securityScopedBookmarks = try container.decodeIfPresent([SecurityScopedBookmarkRecord].self, forKey: .securityScopedBookmarks) ?? []
         self.recycleBin = try container.decodeIfPresent([String].self, forKey: .recycleBin) ?? []
         self.favoriteProjectPaths = try container.decodeIfPresent([String].self, forKey: .favoriteProjectPaths) ?? []
         self.workspaceAlignmentGroups = try container.decodeIfPresent([WorkspaceAlignmentGroupDefinition].self, forKey: .workspaceAlignmentGroups) ?? []

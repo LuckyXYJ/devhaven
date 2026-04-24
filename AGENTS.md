@@ -2,6 +2,15 @@
 
 DevHaven 当前仓库已经收口为 **纯 macOS 原生主线**：唯一保留的应用源码位于 `macos/`，技术栈为 **SwiftUI + AppKit + Swift Package + GhosttyKit + Sparkle**。
 
+## 复杂布局实现约定
+
+- 保持 **SwiftUI + AppKit** 作为应用主壳、窗口生命周期、导航结构、业务状态与原生能力接入的真相源。
+- 对于**复杂布局、复杂表单、动态编辑区、需要高频调整视觉结构的页面**，优先考虑采用 **`WKWebView` 内嵌本地静态 React 资源** 的方案实现 UI。
+- React 负责页面渲染、交互编排与局部乐观更新；Swift 负责状态真相源、校验、持久化、进程/系统能力与业务动作收口。
+- 已 React 化的复杂页面应采用标准 Node / Vite 工程目录维护源码，并通过对应 `macos/scripts/build-*-webui.sh` 生成随 App bundle 分发的本地静态资源；不要手写长期维护的单体 `host.js` 作为 React 源码真相源。
+- 原生 `dev` / release 构建入口需要先构建这些 React WebUI 资源，再进入 Swift 构建；App 运行时只加载生成后的本地静态资源，不在运行时依赖 Node。
+- Ghostty、Workspace 主壳、Git / Commit / Diff 主链这类强原生交互区域，除非明确批准，不要为了“统一技术栈”而整体 React 化。
+
 ## 当前目录结构
 
 - `dev`
@@ -10,8 +19,12 @@ DevHaven 当前仓库已经收口为 **纯 macOS 原生主线**：唯一保留�
   - 本机 release 打包入口；固定委托 `bash macos/scripts/build-native-app.sh --release`，并透传其余参数
 - `macos/Package.swift`
   - 原生子工程入口
+- `macos/WebUI/WorkspaceRunConfiguration/`
+  - 运行配置页的标准 React + Vite 源码工程；源码位于 `src/`，通过 `npm run build` 输出到 App 资源目录
 - `macos/Sources/DevHavenApp/`
   - 原生 UI、窗口壳、GhosttyKit 宿主、设置页、终端工作区视图、Sparkle updater 运行时
+- `macos/Sources/DevHavenApp/WorkspaceRunConfigurationResources/`
+  - 运行配置 React 页面的构建产物；由 `macos/WebUI/WorkspaceRunConfiguration` 生成并随 App bundle 分发，Swift 侧 `WKWebView` 只加载这里的静态资源
 - `macos/Sources/DevHavenApp/Update/`
   - Sparkle 相关的 bundle 元数据解析、appcast 手动检查、更新诊断与 updater controller
 - `macos/Sources/DevHavenApp/AgentResources/`
@@ -171,6 +184,8 @@ DevHaven 当前仓库已经收口为 **纯 macOS 原生主线**：唯一保留�
   - 原生 UI / Core 测试
 - `macos/scripts/build-native-app.sh`
   - 原生 `.app` 本地打包脚本；负责嵌入 Sparkle.framework，并写入 `CFBundleVersion` / `SUFeedURL` / `DevHavenUpdateDeliveryMode` / 下载页 URL / `SUPublicEDKey`
+- `macos/scripts/build-run-configuration-webui.sh`
+  - 运行配置页 React WebUI 构建脚本；负责安装 Node 依赖并将 Vite 构建产物写入 `WorkspaceRunConfigurationResources`
 - `macos/scripts/setup-ghostty-framework.sh`
   - 准备 `macos/Vendor` 的 Ghostty framework / resources
 - `macos/scripts/setup-sparkle-framework.sh`
@@ -300,10 +315,10 @@ DevHaven 当前仓库已经收口为 **纯 macOS 原生主线**：唯一保留�
 - Nightly 发布：`.github/workflows/nightly.yml`
 - 3.0.0 起 release/nightly workflow **不再依赖 Node / pnpm / Tauri**
 - stable / nightly 都通过 matrix 同时构建 `arm64` 与 `x86_64` 两个 macOS 产物，二者都跑在 `macos-26`：
-  - `arm64`：原生 runner 架构直接构建，并执行 `swift test --package-path macos`
+  - `arm64`：原生 runner 架构直接构建，并执行一次 `swift build --package-path macos -c debug` 做轻量编译校验
   - `x86_64`：通过 `DEVHAVEN_NATIVE_TRIPLE=x86_64-apple-macosx14.0` 交叉构建，并额外执行一次 `swift build --package-path macos -c debug --triple x86_64-apple-macosx14.0` 做编译验证
 - matrix 产物会先各自上传架构 zip，再由后置 job 用 `create-universal-app.sh` 合成 `DevHaven-macos-universal.zip`；Sparkle appcast 只指向 universal 安装包，避免客户端升级链路再做架构分叉判断
-- release / nightly workflow 都会先打印 `xcodebuild -version`，并固定 `git fetch` Ghostty 源码（当前 pin：`da10707f93104c5466cd4e64b80ff48f789238a0`）+ `setup-ghostty-framework.sh` / `setup-sparkle-framework.sh` 准备 vendor，再执行测试、打包、appcast 生成
+- release / nightly workflow 都会先打印 `xcodebuild -version`，并固定 `git fetch` Ghostty 源码（当前 pin：`da10707f93104c5466cd4e64b80ff48f789238a0`）+ `setup-ghostty-framework.sh` / `setup-sparkle-framework.sh` 准备 vendor，再执行轻量编译校验、打包、appcast 生成
 - stable feed 采用 staged appcast：先上传 immutable release assets 与 `appcast-staged.xml`，最后通过 `promote-appcast.sh` 把 feed 提升到 `stable-appcast/appcast.xml`；nightly 同理维护 `nightly/appcast.xml`
 - Sparkle appcast 生成脚本会优先复用 alias release 上已发布的旧 appcast，保留历史条目；当前 `maximum-deltas=0`，先以完整包升级为主，后续再扩展 delta 更新
 
@@ -315,7 +330,7 @@ DevHaven 当前仓库已经收口为 **纯 macOS 原生主线**：唯一保留�
 - 根目录 `./release` 是推荐的本机 release 打包入口；它只负责把仓库根作为工作目录，并固定调用 `bash macos/scripts/build-native-app.sh --release`，不要在这里复制第二套打包逻辑。
 - DevHaven 内嵌 Ghostty 终端会**优先**读取 `~/.devhaven/ghostty/config` 与 `~/.devhaven/ghostty/config.ghostty`；如果这里还没有 DevHaven 专属配置，则会回退到独立 Ghostty App 的现有全局配置（如 `~/Library/Application Support/com.mitchellh.ghostty/config*`），避免升级后突然丢失用户已有的主题 / 键位 / 字体设置。
 - `macos/Vendor/` 不是版本库真相源，只是本机开发时通过 `setup-ghostty-framework.sh` / `setup-sparkle-framework.sh` 准备的本地 vendor 目录；该目录由 `.gitignore` 忽略，不应提交。linked worktree 默认也不会自动继承该目录，需要通过脚本准备或复用现有 vendor。
-- 由于 `macos/Package.swift` 的 `GhosttyKit` 是本地 binary target，任何干净 checkout（包括 CI）在跑 `swift test --package-path macos` 前都必须先把有效的 `macos/Vendor/GhosttyKit.xcframework` 准备好。
+- 由于 `macos/Package.swift` 的 `GhosttyKit` 是本地 binary target，任何干净 checkout（包括 CI）在跑 `swift build --package-path macos` 或 `swift test --package-path macos` 前都必须先把有效的 `macos/Vendor/GhosttyKit.xcframework` 准备好。
 - 原生打包脚本只依赖：
   - `macos/Resources/AppMetadata.json`
   - `macos/Resources/DevHaven.icns`

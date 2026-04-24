@@ -1,6 +1,17 @@
 import Foundation
 import DevHavenCore
 
+private enum SecurityScopedBookmarkImportError: LocalizedError {
+    case bookmarkGenerationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .bookmarkGenerationFailed(message):
+            message
+        }
+    }
+}
+
 enum ProjectDirectoryImportAction {
     case addDirectory
     case addProjects
@@ -53,11 +64,23 @@ enum ProjectDirectoryImportSupport {
         )
 
         do {
+            let bookmarkRecordsByPath = try securityScopedBookmarkRecords(
+                from: urls,
+                action: action,
+                requireBookmarks: viewModel.currentDistribution == .appStore
+            )
             switch action {
             case .addDirectory:
-                try await importDirectories(paths: paths, viewModel: viewModel)
+                try await importDirectories(
+                    paths: paths,
+                    bookmarkRecordsByPath: bookmarkRecordsByPath,
+                    viewModel: viewModel
+                )
             case .addProjects:
-                try await viewModel.addDirectProjects(paths)
+                try await viewModel.addDirectProjects(
+                    paths,
+                    securityScopedBookmarks: paths.compactMap { bookmarkRecordsByPath[$0] }
+                )
                 viewModel.selectDirectory(.directProjects)
                 ProjectImportDiagnostics.shared.recordSelectionApplied(
                     action: .addProjects,
@@ -77,6 +100,7 @@ enum ProjectDirectoryImportSupport {
     @MainActor
     private static func importDirectories(
         paths: [String],
+        bookmarkRecordsByPath: [String: SecurityScopedBookmarkRecord],
         viewModel: NativeAppViewModel
     ) async throws {
         var importedPaths = [String]()
@@ -84,7 +108,7 @@ enum ProjectDirectoryImportSupport {
 
         for path in paths {
             do {
-                try viewModel.addProjectDirectory(path)
+                try viewModel.addProjectDirectory(path, securityScopedBookmark: bookmarkRecordsByPath[path])
                 importedPaths.append(path)
             } catch {
                 let resolvedError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -128,5 +152,48 @@ enum ProjectDirectoryImportSupport {
             }
             return path
         }
+    }
+
+    @MainActor
+    private static func securityScopedBookmarkRecords(
+        from urls: [URL],
+        action: ProjectDirectoryImportAction,
+        requireBookmarks: Bool
+    ) throws -> [String: SecurityScopedBookmarkRecord] {
+        var recordsByPath: [String: SecurityScopedBookmarkRecord] = [:]
+        var failedPaths = [String]()
+
+        for url in urls {
+            let normalizedPath = url.standardizedFileURL.path()
+            guard !normalizedPath.isEmpty else {
+                continue
+            }
+            do {
+                let bookmarkData = try url.bookmarkData(
+                    options: [.withSecurityScope],
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                recordsByPath[normalizedPath] = SecurityScopedBookmarkRecord(
+                    path: normalizedPath,
+                    bookmarkDataBase64: bookmarkData.base64EncodedString()
+                )
+            } catch {
+                failedPaths.append(normalizedPath)
+            }
+        }
+
+        if requireBookmarks, !failedPaths.isEmpty {
+            let errorDescription = failedPaths.count == 1
+                ? "无法为目录生成沙盒授权：\(failedPaths[0])"
+                : "以下目录无法生成沙盒授权：\n\(failedPaths.joined(separator: "\n"))"
+            ProjectImportDiagnostics.shared.recordFailure(
+                action: action.diagnosticsAction,
+                errorDescription: errorDescription
+            )
+            throw SecurityScopedBookmarkImportError.bookmarkGenerationFailed(errorDescription)
+        }
+
+        return recordsByPath
     }
 }

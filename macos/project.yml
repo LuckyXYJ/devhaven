@@ -57,6 +57,9 @@ targets:
         excludes:
           - GhosttyResources
           - AgentResources
+          - MonacoEditorResources
+          - MonacoDiffResources
+          - WorkspaceRunConfigurationResources
       - path: Resources/DevHaven.icns
         buildPhase: resources
       - path: Resources/PrivacyInfo.xcprivacy
@@ -85,12 +88,23 @@ targets:
         script: |
           set -euo pipefail
           resources_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
-          rm -rf "${resources_dir}/GhosttyResources" "${resources_dir}/AgentResources"
+          rm -rf \
+            "${resources_dir}/GhosttyResources" \
+            "${resources_dir}/AgentResources" \
+            "${resources_dir}/MonacoEditorResources" \
+            "${resources_dir}/MonacoDiffResources" \
+            "${resources_dir}/WorkspaceRunConfigurationResources"
           cp -R "${PROJECT_DIR}/Sources/DevHavenApp/GhosttyResources" "${resources_dir}/GhosttyResources"
           cp -R "${PROJECT_DIR}/Sources/DevHavenApp/AgentResources" "${resources_dir}/AgentResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/MonacoEditorResources" "${resources_dir}/MonacoEditorResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/MonacoDiffResources" "${resources_dir}/MonacoDiffResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/WorkspaceRunConfigurationResources" "${resources_dir}/WorkspaceRunConfigurationResources"
         outputFiles:
           - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GhosttyResources"
           - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AgentResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MonacoEditorResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MonacoDiffResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/WorkspaceRunConfigurationResources"
   DevHavenAppStore:
     type: application
     platform: macOS
@@ -103,6 +117,9 @@ targets:
         excludes:
           - GhosttyResources
           - AgentResources
+          - MonacoEditorResources
+          - MonacoDiffResources
+          - WorkspaceRunConfigurationResources
       - path: Resources/DevHaven.icns
         buildPhase: resources
       - path: Resources/PrivacyInfo.xcprivacy
@@ -129,10 +146,20 @@ targets:
         script: |
           set -euo pipefail
           resources_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
-          rm -rf "${resources_dir}/GhosttyResources"
+          rm -rf \
+            "${resources_dir}/GhosttyResources" \
+            "${resources_dir}/MonacoEditorResources" \
+            "${resources_dir}/MonacoDiffResources" \
+            "${resources_dir}/WorkspaceRunConfigurationResources"
           cp -R "${PROJECT_DIR}/Sources/DevHavenApp/GhosttyResources" "${resources_dir}/GhosttyResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/MonacoEditorResources" "${resources_dir}/MonacoEditorResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/MonacoDiffResources" "${resources_dir}/MonacoDiffResources"
+          cp -R "${PROJECT_DIR}/Sources/DevHavenApp/WorkspaceRunConfigurationResources" "${resources_dir}/WorkspaceRunConfigurationResources"
         outputFiles:
           - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GhosttyResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MonacoEditorResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MonacoDiffResources"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/WorkspaceRunConfigurationResources"
   DevHavenCoreTests:
     type: bundle.unit-test
     platform: macOS

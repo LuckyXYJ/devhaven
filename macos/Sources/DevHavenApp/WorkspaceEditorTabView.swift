@@ -1,79 +1,20 @@
 import SwiftUI
 import DevHavenCore
 
-struct WorkspaceEditorSearchBarState: Equatable {
-    var query = ""
-    var replacement = ""
-    var isPresented = false
-    var showsReplace = false
-    var isCaseSensitive = false
-    var matchesWholeWords = false
-    var usesRegularExpression = false
-    var preservesReplacementCase = false
-
-    var effectiveQuery: String {
-        isPresented ? query : ""
-    }
-}
-
-private extension WorkspaceEditorSearchBarState {
-    init(runtimeState: WorkspaceEditorSearchPresentationState) {
-        self.init(
-            query: runtimeState.query,
-            replacement: runtimeState.replacement,
-            isPresented: runtimeState.isPresented,
-            showsReplace: runtimeState.showsReplace,
-            isCaseSensitive: runtimeState.isCaseSensitive,
-            matchesWholeWords: runtimeState.matchesWholeWords,
-            usesRegularExpression: runtimeState.usesRegularExpression,
-            preservesReplacementCase: runtimeState.preservesReplacementCase
-        )
-    }
-
-    var runtimeState: WorkspaceEditorSearchPresentationState {
-        WorkspaceEditorSearchPresentationState(
-            query: query,
-            replacement: replacement,
-            isPresented: isPresented,
-            showsReplace: showsReplace,
-            isCaseSensitive: isCaseSensitive,
-            matchesWholeWords: matchesWholeWords,
-            usesRegularExpression: usesRegularExpression,
-            preservesReplacementCase: preservesReplacementCase
-        )
-    }
-}
-
 struct WorkspaceEditorTabView: View {
     @Bindable var viewModel: NativeAppViewModel
     let projectPath: String
     let tabID: String
 
     @State private var editorCommandRouter = WorkspaceEditorCommandRouter()
-    @State private var searchBarState = WorkspaceEditorSearchBarState()
-    @State private var searchRequestState = WorkspaceTextEditorSearchRequestState()
-    @State private var searchSessionState = WorkspaceTextEditorSearchSessionState()
-    @State private var selectedSearchSeed: String?
+    @StateObject private var monacoBridge = WorkspaceMonacoEditorBridge()
     @State private var goToLineDraft = ""
     @State private var isGoToLinePresented = false
-
-    init(viewModel: NativeAppViewModel, projectPath: String, tabID: String) {
-        self.viewModel = viewModel
-        self.projectPath = projectPath
-        self.tabID = tabID
-
-        let session = viewModel.workspaceEditorRuntimeSession(for: projectPath, tabID: tabID)
-        _searchBarState = State(initialValue: WorkspaceEditorSearchBarState(runtimeState: session.searchPresentation))
-    }
 
     var body: some View {
         if let tab = viewModel.workspaceEditorTabState(for: projectPath, tabID: tabID) {
             VStack(spacing: 0) {
                 header(for: tab)
-                if tab.kind == .text, searchBarState.isPresented {
-                    Divider()
-                    searchBar(for: tab)
-                }
                 Divider()
                 content(for: tab)
             }
@@ -86,16 +27,8 @@ struct WorkspaceEditorTabView: View {
             )
             .task(id: tabID) {
                 syncEditorCommandRouter()
-                restoreEditorSessionIfNeeded()
             }
             .onChange(of: tab.kind) { _, _ in
-                syncEditorCommandRouter()
-            }
-            .onChange(of: searchBarState) { _, nextValue in
-                persistEditorSession(searchBarState: nextValue)
-                syncEditorCommandRouter()
-            }
-            .onChange(of: selectedSearchSeed) { _, _ in
                 syncEditorCommandRouter()
             }
             .sheet(isPresented: $isGoToLinePresented) {
@@ -121,29 +54,14 @@ struct WorkspaceEditorTabView: View {
         } else {
             switch tab.kind {
             case .text:
-                WorkspaceTextEditorView(
-                    editorID: "workspace-editor-\(tab.id)",
-                    text: Binding(
-                        get: {
-                            viewModel.workspaceEditorTabState(for: projectPath, tabID: tabID)?.text ?? tab.text
-                        },
-                        set: { nextText in
-                            viewModel.updateWorkspaceEditorText(nextText, tabID: tabID, in: projectPath)
-                        }
-                    ),
-                    isEditable: tab.isEditable,
-                    shouldRequestFocus: viewModel.workspaceFocusedArea == .editorTab(tabID),
-                    displayOptions: viewModel.workspaceEditorDisplayOptions,
-                    syntaxStyle: WorkspaceEditorSyntaxStyle.infer(fromFilePath: tab.filePath),
-                    searchQuery: searchBarState.effectiveQuery,
-                    isSearchCaseSensitive: searchBarState.isCaseSensitive,
-                    matchesSearchWholeWords: searchBarState.matchesWholeWords,
-                    usesRegularExpressionInSearch: searchBarState.usesRegularExpression,
-                    searchRequestState: $searchRequestState,
-                    searchSessionState: $searchSessionState,
-                    selectionText: $selectedSearchSeed
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if isMarkdownRenderable(tab) {
+                    markdownContent(for: tab)
+                } else {
+                    sourceEditorView(
+                        for: tab,
+                        shouldRequestFocus: viewModel.workspaceFocusedArea == .editorTab(tabID)
+                    )
+                }
             case .binary:
                 editorUnavailableContent(
                     title: "二进制文件暂不支持",
@@ -207,20 +125,29 @@ struct WorkspaceEditorTabView: View {
 
             Spacer(minLength: 0)
 
+            if isMarkdownRenderable(tab) {
+                markdownPresentationPicker(for: tab)
+                    .frame(width: 108)
+            }
+
             Button("查找") {
-                presentSearch(replace: false)
+                withVisibleSourceEditor {
+                    monacoBridge.startSearch()
+                }
             }
             .buttonStyle(.borderless)
             .disabled(tab.kind != .text)
 
             Button("替换") {
-                presentSearch(replace: true)
+                withVisibleSourceEditor {
+                    monacoBridge.showReplace()
+                }
             }
             .buttonStyle(.borderless)
             .disabled(tab.kind != .text || !tab.isEditable)
 
             editorDisplayOptionsMenu
-                .disabled(tab.kind != .text)
+                .disabled(tab.kind != .text || isMarkdownPreviewOnly(tab))
 
             Button("重新载入") {
                 viewModel.reloadWorkspaceEditorTab(tabID, in: projectPath)
@@ -242,118 +169,6 @@ struct WorkspaceEditorTabView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(NativeTheme.window)
-    }
-
-    private func searchBar(for tab: WorkspaceEditorTabState) -> some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(NativeTheme.textSecondary)
-                TextField("查找", text: $searchBarState.query)
-                    .textFieldStyle(.plain)
-                    .font(.callout.monospaced())
-                    .onSubmit {
-                        issueSearchRequest(.findNext)
-                    }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(NativeTheme.surface)
-            .clipShape(.rect(cornerRadius: 10))
-
-            if searchBarState.showsReplace {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .foregroundStyle(NativeTheme.textSecondary)
-                    TextField("替换", text: $searchBarState.replacement)
-                        .textFieldStyle(.plain)
-                        .font(.callout.monospaced())
-                        .onSubmit {
-                            issueSearchRequest(.replaceCurrent)
-                        }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(NativeTheme.surface)
-                .clipShape(.rect(cornerRadius: 10))
-            }
-
-            Toggle(isOn: $searchBarState.isCaseSensitive) {
-                Text("区分大小写")
-                    .font(.caption)
-                    .foregroundStyle(NativeTheme.textSecondary)
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .fixedSize()
-
-            Toggle(isOn: $searchBarState.matchesWholeWords) {
-                Text("全词")
-                    .font(.caption)
-                    .foregroundStyle(NativeTheme.textSecondary)
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .fixedSize()
-
-            Toggle(isOn: $searchBarState.usesRegularExpression) {
-                Text("正则")
-                    .font(.caption)
-                    .foregroundStyle(NativeTheme.textSecondary)
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .fixedSize()
-
-            if searchBarState.showsReplace {
-                Toggle(isOn: $searchBarState.preservesReplacementCase) {
-                    Text("保留大小写")
-                        .font(.caption)
-                        .foregroundStyle(NativeTheme.textSecondary)
-                }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .fixedSize()
-            }
-
-            Spacer(minLength: 0)
-
-            searchStatusView
-
-            searchBarButton("chevron.up", title: "上一处") {
-                issueSearchRequest(.findPrevious)
-            }
-            .disabled(searchBarState.query.isEmpty)
-
-            searchBarButton("chevron.down", title: "下一处") {
-                issueSearchRequest(.findNext)
-            }
-            .disabled(searchBarState.query.isEmpty)
-
-            if searchBarState.showsReplace {
-                searchBarButton("arrow.triangle.2.circlepath", title: "替换当前") {
-                    issueSearchRequest(.replaceCurrent)
-                }
-                .disabled(searchBarState.query.isEmpty || !tab.isEditable)
-
-                searchBarButton("text.badge.checkmark", title: "全部替换") {
-                    issueSearchRequest(.replaceAll)
-                }
-                .disabled(searchBarState.query.isEmpty || !tab.isEditable)
-            }
-
-            searchBarButton(searchBarState.showsReplace ? "text.magnifyingglass" : "arrow.left.arrow.right", title: searchBarState.showsReplace ? "仅查找" : "切换替换") {
-                searchBarState.showsReplace.toggle()
-            }
-            .disabled(tab.kind != .text || (!tab.isEditable && !searchBarState.showsReplace))
-
-            searchBarButton("xmark", title: "关闭") {
-                closeSearch()
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(NativeTheme.window)
     }
 
@@ -404,19 +219,6 @@ struct WorkspaceEditorTabView: View {
             .padding(.vertical, 4)
             .background(background)
             .clipShape(.rect(cornerRadius: 999))
-    }
-
-    private func searchBarButton(_ systemImage: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(NativeTheme.textPrimary)
-                .frame(width: 30, height: 30)
-                .background(NativeTheme.surface)
-                .clipShape(.rect(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .help(title)
     }
 
     private var editorDisplayOptionsMenu: some View {
@@ -480,81 +282,150 @@ struct WorkspaceEditorTabView: View {
                 .labelStyle(.titleAndIcon)
         }
         .menuStyle(.borderlessButton)
-        .help("编辑器显示选项")
+            .help("编辑器显示选项")
     }
 
-    private func presentSearch(replace: Bool) {
-        searchBarState.isPresented = true
-        searchBarState.showsReplace = replace || searchBarState.showsReplace
-        syncEditorCommandRouter()
-        issueSearchRequest(.revealSearch)
+    @ViewBuilder
+    private func markdownContent(for tab: WorkspaceEditorTabState) -> some View {
+        switch markdownPresentationMode(for: tab) {
+        case .source:
+            sourceEditorView(
+                for: tab,
+                shouldRequestFocus: viewModel.workspaceFocusedArea == .editorTab(tabID)
+            )
+        case .preview:
+            markdownPreviewView(for: tab)
+        case .split:
+            WorkspaceSplitView(
+                direction: .horizontal,
+                ratio: markdownSplitRatio(for: tab),
+                onRatioChange: { nextRatio in
+                    updateMarkdownSplitRatio(nextRatio, for: tab)
+                },
+                onRatioChangeEnded: { nextRatio in
+                    updateMarkdownSplitRatio(nextRatio, for: tab)
+                },
+                minLeadingSize: 320,
+                minTrailingSize: 240,
+                onEqualize: {
+                    updateMarkdownSplitRatio(0.5, for: tab)
+                }
+            ) {
+                sourceEditorView(
+                    for: tab,
+                    shouldRequestFocus: viewModel.workspaceFocusedArea == .editorTab(tabID)
+                )
+            } trailing: {
+                markdownPreviewView(for: tab)
+            }
+        }
     }
 
-    private func closeSearch() {
-        searchBarState.isPresented = false
-        searchBarState.showsReplace = false
-        searchSessionState = WorkspaceTextEditorSearchSessionState()
-        syncEditorCommandRouter()
-    }
-
-    private func issueSearchRequest(_ kind: WorkspaceTextEditorSearchRequestKind) {
-        searchRequestState = WorkspaceTextEditorSearchRequestState(
-            query: searchBarState.query,
-            replacement: searchBarState.replacement,
-            revision: searchRequestState.revision + 1,
-            kind: kind,
-            targetLine: searchRequestState.targetLine,
-            isCaseSensitive: searchBarState.isCaseSensitive,
-            matchesWholeWords: searchBarState.matchesWholeWords,
-            usesRegularExpression: searchBarState.usesRegularExpression,
-            preservesReplacementCase: searchBarState.preservesReplacementCase
+    private func sourceEditorView(
+        for tab: WorkspaceEditorTabState,
+        shouldRequestFocus: Bool
+    ) -> some View {
+        WorkspaceMonacoEditorView(
+            filePath: tab.filePath,
+            text: Binding(
+                get: {
+                    viewModel.workspaceEditorTabState(for: projectPath, tabID: tabID)?.text ?? tab.text
+                },
+                set: { nextText in
+                    viewModel.updateWorkspaceEditorText(nextText, tabID: tabID, in: projectPath)
+                }
+            ),
+            isEditable: tab.isEditable,
+            shouldRequestFocus: shouldRequestFocus,
+            displayOptions: viewModel.workspaceEditorDisplayOptions,
+            bridge: monacoBridge,
+            onSaveRequested: {
+                viewModel.saveWorkspaceEditorTab(tabID, in: projectPath)
+            }
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func markdownPreviewView(for tab: WorkspaceEditorTabState) -> some View {
+        WorkspaceMarkdownRenderedContentView(
+            content: tab.text,
+            baseURL: markdownBaseURL(for: tab),
+            layout: .fillAvailableSpace
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(NativeTheme.window)
+    }
+
+    private func markdownPresentationPicker(for tab: WorkspaceEditorTabState) -> some View {
+        Picker(
+            "",
+            selection: Binding(
+                get: {
+                    markdownPresentationMode(for: tab)
+                },
+                set: { nextMode in
+                    updateMarkdownPresentationMode(nextMode, for: tab)
+                }
+            )
+        ) {
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .accessibilityLabel("源码")
+                .tag(WorkspaceEditorMarkdownPresentationMode.source)
+            Image(systemName: "doc.text.image")
+                .accessibilityLabel("预览")
+                .tag(WorkspaceEditorMarkdownPresentationMode.preview)
+            Image(systemName: "rectangle.split.2x1")
+                .accessibilityLabel("分栏")
+                .tag(WorkspaceEditorMarkdownPresentationMode.split)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .help("Markdown 视图模式")
     }
 
     private func confirmGoToLine() {
         guard let lineNumber = Int(goToLineDraft), lineNumber > 0 else {
             return
         }
-        searchRequestState = WorkspaceTextEditorSearchRequestState(
-            query: searchBarState.query,
-            replacement: searchBarState.replacement,
-            revision: searchRequestState.revision + 1,
-            kind: .goToLine,
-            targetLine: lineNumber - 1,
-            isCaseSensitive: searchBarState.isCaseSensitive,
-            matchesWholeWords: searchBarState.matchesWholeWords,
-            usesRegularExpression: searchBarState.usesRegularExpression,
-            preservesReplacementCase: searchBarState.preservesReplacementCase
-        )
+        monacoBridge.goToLine(lineNumber)
         isGoToLinePresented = false
     }
 
     private func syncEditorCommandRouter() {
         editorCommandRouter.startSearchAction = {
-            presentSearch(replace: false)
+            withVisibleSourceEditor {
+                monacoBridge.startSearch()
+            }
         }
         editorCommandRouter.showReplaceAction = {
-            presentSearch(replace: true)
+            withVisibleSourceEditor {
+                monacoBridge.showReplace()
+            }
         }
         editorCommandRouter.navigateSearchNextAction = {
-            presentSearch(replace: searchBarState.showsReplace)
-            issueSearchRequest(.findNext)
+            withVisibleSourceEditor {
+                monacoBridge.findNext()
+            }
         }
         editorCommandRouter.navigateSearchPreviousAction = {
-            presentSearch(replace: searchBarState.showsReplace)
-            issueSearchRequest(.findPrevious)
+            withVisibleSourceEditor {
+                monacoBridge.findPrevious()
+            }
         }
         editorCommandRouter.useSelectionForSearchAction = {
-            if let selectedSearchSeed, !selectedSearchSeed.isEmpty {
-                searchBarState.query = selectedSearchSeed
+            withVisibleSourceEditor {
+                monacoBridge.useSelectionForFind()
             }
-            presentSearch(replace: false)
         }
         editorCommandRouter.closeSearchAction = {
-            closeSearch()
+            monacoBridge.closeSearch()
         }
         editorCommandRouter.goToLineAction = {
-            isGoToLinePresented = true
+            withVisibleSourceEditor {
+                isGoToLinePresented = true
+            }
         }
         editorCommandRouter.saveAction = {
             viewModel.saveWorkspaceEditorTab(tabID, in: projectPath)
@@ -570,38 +441,69 @@ struct WorkspaceEditorTabView: View {
         viewModel.updateWorkspaceEditorDisplayOptions(nextOptions)
     }
 
-    private func persistEditorSession(searchBarState: WorkspaceEditorSearchBarState) {
+    private func isMarkdownRenderable(_ tab: WorkspaceEditorTabState) -> Bool {
+        tab.kind == .text && WorkspaceEditorSyntaxStyle.infer(fromFilePath: tab.filePath) == .markdown
+    }
+
+    private func isMarkdownPreviewOnly(_ tab: WorkspaceEditorTabState) -> Bool {
+        isMarkdownRenderable(tab) && markdownPresentationMode(for: tab) == .preview
+    }
+
+    private func markdownPresentationMode(for tab: WorkspaceEditorTabState) -> WorkspaceEditorMarkdownPresentationMode {
+        guard isMarkdownRenderable(tab) else {
+            return .source
+        }
+        return viewModel.workspaceEditorRuntimeSession(for: projectPath, tabID: tabID).markdownPresentationMode
+    }
+
+    private func markdownSplitRatio(for tab: WorkspaceEditorTabState) -> Double {
+        guard isMarkdownRenderable(tab) else {
+            return 0.5
+        }
+        return viewModel.workspaceEditorRuntimeSession(for: projectPath, tabID: tabID).markdownSplitRatio
+    }
+
+    private func updateMarkdownPresentationMode(
+        _ nextMode: WorkspaceEditorMarkdownPresentationMode,
+        for tab: WorkspaceEditorTabState
+    ) {
+        guard isMarkdownRenderable(tab) else {
+            return
+        }
         var session = viewModel.workspaceEditorRuntimeSession(for: projectPath, tabID: tabID)
-        session.searchPresentation = searchBarState.runtimeState
+        session.markdownPresentationMode = nextMode
         viewModel.updateWorkspaceEditorRuntimeSession(session, tabID: tabID, in: projectPath)
     }
 
-    private func restoreEditorSessionIfNeeded() {
-        guard searchBarState.isPresented else {
+    private func updateMarkdownSplitRatio(_ nextRatio: Double, for tab: WorkspaceEditorTabState) {
+        guard isMarkdownRenderable(tab) else {
             return
         }
-        issueSearchRequest(.revealSearch)
+        var session = viewModel.workspaceEditorRuntimeSession(for: projectPath, tabID: tabID)
+        session.markdownSplitRatio = nextRatio
+        viewModel.updateWorkspaceEditorRuntimeSession(session, tabID: tabID, in: projectPath)
     }
 
-    @ViewBuilder
-    private var searchStatusView: some View {
-        if let errorMessage = searchSessionState.errorMessage {
-            Text(errorMessage)
-                .font(.caption.monospaced())
-                .foregroundStyle(.red)
-                .lineLimit(1)
-        } else if !searchBarState.query.isEmpty {
-            Text(searchStatusText)
-                .font(.caption.monospaced())
-                .foregroundStyle(NativeTheme.textSecondary)
+    private func markdownBaseURL(for tab: WorkspaceEditorTabState) -> URL? {
+        URL(fileURLWithPath: tab.filePath).deletingLastPathComponent()
+    }
+
+    private func withVisibleSourceEditor(_ action: @escaping () -> Void) {
+        guard let currentTab = viewModel.workspaceEditorTabState(for: projectPath, tabID: tabID) else {
+            return
+        }
+        guard isMarkdownRenderable(currentTab),
+              markdownPresentationMode(for: currentTab) == .preview
+        else {
+            action()
+            return
+        }
+
+        updateMarkdownPresentationMode(.split, for: currentTab)
+        DispatchQueue.main.async {
+            monacoBridge.focusEditor()
+            action()
         }
     }
 
-    private var searchStatusText: String {
-        if let currentMatchIndex = searchSessionState.currentMatchIndex,
-           searchSessionState.matchCount > 0 {
-            return "\(currentMatchIndex) / \(searchSessionState.matchCount)"
-        }
-        return "\(searchSessionState.matchCount) 处匹配"
-    }
 }

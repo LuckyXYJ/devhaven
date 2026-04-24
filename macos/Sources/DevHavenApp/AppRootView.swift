@@ -8,6 +8,7 @@ struct AppRootView: View {
     @ObservedObject var updateController: DevHavenUpdateController
     @ObservedObject var quitGuard: AppQuitGuard
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var workspaceTerminalStoreRegistry = WorkspaceTerminalStoreRegistry()
     @State private var cliCoordinator: WorkspaceCLICommandCoordinator?
     @State private var projectDetailPanelWidth: CGFloat = AppRootProjectDetailLayoutPolicy.defaultPanelWidth
 
@@ -217,15 +218,22 @@ struct AppRootView: View {
     @ViewBuilder
     private func primaryContent(contentVisibilityPolicy: AppRootContentVisibilityPolicy) -> some View {
         ZStack {
-            MainContentView(viewModel: viewModel)
-                .opacity(contentVisibilityPolicy.mainContentOpacity)
-                .allowsHitTesting(contentVisibilityPolicy.mainContentAllowsHitTesting)
-                .accessibilityHidden(contentVisibilityPolicy.mainContentOpacity == 0)
+            if contentVisibilityPolicy.keepsMainContentMounted {
+                MainContentView(viewModel: viewModel)
+                    .opacity(contentVisibilityPolicy.mainContentOpacity)
+                    .allowsHitTesting(contentVisibilityPolicy.mainContentAllowsHitTesting)
+                    .accessibilityHidden(contentVisibilityPolicy.mainContentOpacity == 0)
+            }
 
-            WorkspaceRootView(viewModel: viewModel)
-                .opacity(contentVisibilityPolicy.workspaceContentOpacity)
-                .allowsHitTesting(contentVisibilityPolicy.workspaceContentAllowsHitTesting)
-                .accessibilityHidden(contentVisibilityPolicy.workspaceContentOpacity == 0)
+            if contentVisibilityPolicy.keepsWorkspaceMounted {
+                WorkspaceRootView(
+                    viewModel: viewModel,
+                    terminalStoreRegistry: workspaceTerminalStoreRegistry
+                )
+                    .opacity(contentVisibilityPolicy.workspaceContentOpacity)
+                    .allowsHitTesting(contentVisibilityPolicy.workspaceContentAllowsHitTesting)
+                    .accessibilityHidden(contentVisibilityPolicy.workspaceContentOpacity == 0)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NativeTheme.window)
@@ -247,7 +255,7 @@ struct AppRootView: View {
             DetailPanelCloseAction.perform(for: viewModel)
             return true
         case let .closePane(paneID):
-            viewModel.closeWorkspacePane(paneID)
+            requestCloseActiveWorkspacePane(paneID)
             return true
         case let .closeEditorTab(tabID):
             viewModel.closeWorkspaceEditorTab(tabID)
@@ -256,7 +264,7 @@ struct AppRootView: View {
             viewModel.closeWorkspaceDiffTab(tabID)
             return true
         case let .closeTab(tabID):
-            viewModel.closeWorkspaceTab(tabID)
+            requestCloseActiveWorkspaceTab(tabID)
             return true
         case .exitWorkspace:
             viewModel.exitWorkspace()
@@ -311,6 +319,60 @@ struct AppRootView: View {
             cliCoordinator = coordinator
         } catch {
             viewModel.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func requestCloseActiveWorkspacePane(_ paneID: String) {
+        guard let activeProjectPath = viewModel.activeWorkspaceProjectPath,
+              let controller = viewModel.activeWorkspaceController,
+              let pane = controller.tabs.flatMap(\.leaves).first(where: { $0.id == paneID })
+        else {
+            viewModel.closeWorkspacePane(paneID)
+            return
+        }
+
+        let evaluators: [any WorkspaceTerminalCloseRequirementEvaluating] = pane.items.compactMap { item in
+            guard item.isTerminal else {
+                return nil
+            }
+            return workspaceTerminalStoreRegistry.modelIfLoaded(
+                for: activeProjectPath,
+                itemID: item.id
+            ).map { $0 as any WorkspaceTerminalCloseRequirementEvaluating }
+        }
+        WorkspaceTerminalCloseCoordinator.confirmIfNeeded(
+            evaluators: evaluators,
+            actionDescription: "关闭整个窗格"
+        ) {
+            viewModel.closeWorkspacePane(paneID)
+        }
+    }
+
+    private func requestCloseActiveWorkspaceTab(_ tabID: String) {
+        guard let activeProjectPath = viewModel.activeWorkspaceProjectPath,
+              let controller = viewModel.activeWorkspaceController,
+              let tab = controller.tabs.first(where: { $0.id == tabID })
+        else {
+            viewModel.closeWorkspaceTab(tabID)
+            return
+        }
+
+        let evaluators: [any WorkspaceTerminalCloseRequirementEvaluating] = tab.leaves.flatMap { pane in
+            pane.items.compactMap { item in
+                guard item.isTerminal else {
+                    return nil
+                }
+                return workspaceTerminalStoreRegistry.modelIfLoaded(
+                    for: activeProjectPath,
+                    itemID: item.id
+                ).map { $0 as any WorkspaceTerminalCloseRequirementEvaluating }
+            }
+        }
+        WorkspaceTerminalCloseCoordinator.confirmIfNeeded(
+            evaluators: evaluators,
+            actionDescription: "关闭整个标签页"
+        ) {
+            viewModel.closeWorkspaceTab(tabID)
         }
     }
 }

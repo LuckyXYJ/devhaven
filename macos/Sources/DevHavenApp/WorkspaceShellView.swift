@@ -3,8 +3,9 @@ import DevHavenCore
 
 struct WorkspaceShellView: View {
     @Bindable var viewModel: NativeAppViewModel
+    let terminalStoreRegistry: WorkspaceTerminalStoreRegistry
     @State private var terminalCommandRouter = WorkspaceTerminalCommandRouter()
-    @StateObject private var terminalStoreRegistry = WorkspaceTerminalStoreRegistry()
+    @State private var surfaceReactivationTask: Task<Void, Never>?
 
     /// Combined hash of all tool-window properties that require a sync call,
     /// so we can observe them with a single `.onChange` instead of five.
@@ -34,6 +35,7 @@ struct WorkspaceShellView: View {
                 syncTerminalStores()
                 syncTerminalCommandRouter()
                 warmActiveWorkspace()
+                scheduleVisibleSurfaceReactivation()
                 viewModel.syncActiveWorkspaceToolWindowContext()
                 WorkspaceLaunchDiagnostics.shared.recordShellMounted(
                     activeProjectPath: viewModel.activeWorkspaceProjectPath,
@@ -41,6 +43,8 @@ struct WorkspaceShellView: View {
                 )
             }
             .onDisappear {
+                surfaceReactivationTask?.cancel()
+                surfaceReactivationTask = nil
                 viewModel.stopWorkspaceAgentSignalObservation()
                 viewModel.setWorkspacePaneSnapshotProvider(nil)
             }
@@ -49,11 +53,13 @@ struct WorkspaceShellView: View {
                 syncTerminalCommandRouter()
                 viewModel.refreshWorkspaceAgentSignals()
                 warmActiveWorkspace()
+                scheduleVisibleSurfaceReactivation()
                 viewModel.syncActiveWorkspaceToolWindowContext()
             }
             .onChange(of: viewModel.activeWorkspaceProjectPath) { _, _ in
                 syncTerminalCommandRouter()
                 warmActiveWorkspace()
+                scheduleVisibleSurfaceReactivation()
                 viewModel.syncActiveWorkspaceToolWindowContext()
             }
             .onChange(of: toolWindowSyncToken) { _, _ in
@@ -62,6 +68,7 @@ struct WorkspaceShellView: View {
             .onChange(of: viewModel.activeWorkspaceLaunchRequest?.surfaceId) { _, _ in
                 syncTerminalCommandRouter()
                 warmActiveWorkspace()
+                scheduleVisibleSurfaceReactivation()
             }
     }
 
@@ -109,7 +116,7 @@ struct WorkspaceShellView: View {
 
     @ViewBuilder
     private var gitToolWindowContent: some View {
-        if isActiveQuickTerminalSession {
+        if viewModel.activeWorkspaceIsStandaloneQuickTerminal {
             gitModeEmptyState(
                 title: "快速终端暂不支持 Git 模式",
                 systemImage: "bolt.horizontal.circle",
@@ -117,16 +124,18 @@ struct WorkspaceShellView: View {
             )
         } else if viewModel.activeWorkspaceGitRepositoryContext == nil {
             gitModeEmptyState(
-                title: "当前项目不是 Git 仓库",
+                title: "当前工作区未发现 Git 仓库",
                 systemImage: "point.3.connected.trianglepath.dotted",
-                description: "Git 面板只会对当前 active project 所属的 root repository 生效。"
+                description: "Git 面板会优先使用当前项目所属仓库；如果根目录不是 Git 仓库，也会尝试聚合工作区下的 Git 子项目。"
             )
         } else if let gitViewModel = viewModel.activeWorkspaceGitViewModel {
             WorkspaceGitRootView(
                 viewModel: gitViewModel,
+                gitHubViewModel: viewModel.activeWorkspaceGitHubViewModel,
                 onOpenDiff: { file in
                     openGitLogDiffTab(logViewModel: gitViewModel.logViewModel, file: file)
-                }
+                },
+                onCreateIssueWorktree: createIssueWorktree
             )
         } else {
             gitModeEmptyState(
@@ -193,17 +202,21 @@ struct WorkspaceShellView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } trailing: {
                 Group {
-                    if viewModel.workspaceBottomToolWindowState.activeKind == .git {
+                    switch viewModel.workspaceBottomToolWindowState.activeKind {
+                    case .git:
                         gitToolWindowContent
-                    } else {
+                    default:
                         EmptyView()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    if viewModel.workspaceBottomToolWindowState.activeKind == .git {
+                    switch viewModel.workspaceBottomToolWindowState.activeKind {
+                    case .git:
                         viewModel.setWorkspaceFocusedArea(.bottomToolWindow(.git))
+                    default:
+                        break
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -289,15 +302,39 @@ struct WorkspaceShellView: View {
         return fileName.isEmpty ? file.path : fileName
     }
 
-    private func syncTerminalStores() {
-        terminalStoreRegistry.syncRetainedProjectPaths(Set(viewModel.openWorkspaceProjectPaths))
+    private func createIssueWorktree(from detail: WorkspaceGitHubIssueDetail) throws {
+        guard let rootProject = viewModel.activeWorkspaceRootProject else {
+            throw WorkspaceGitHubCommandError.operationRejected("当前未找到可用的 root project")
+        }
+        guard let baseBranch = activeWorkspaceBaseBranchCandidate() else {
+            throw WorkspaceGitHubCommandError.operationRejected(
+                "当前 root project 未检测到基线分支，暂时无法从 Issue 创建 worktree。"
+            )
+        }
+        try viewModel.startCreateWorkspaceWorktree(
+            from: rootProject.path,
+            branch: detail.suggestedBranchName,
+            createBranch: true,
+            baseBranch: baseBranch,
+            autoOpen: true
+        )
     }
 
-    private var isActiveQuickTerminalSession: Bool {
-        guard let activePath = viewModel.activeWorkspaceProjectPath else {
-            return false
+    private func activeWorkspaceBaseBranchCandidate() -> String? {
+        guard let rootProject = viewModel.activeWorkspaceRootProject,
+              let activeProject = viewModel.activeWorkspaceProject
+        else {
+            return nil
         }
-        return viewModel.openWorkspaceSessions.first(where: { $0.projectPath == activePath })?.isQuickTerminal ?? false
+        if activeProject.path != rootProject.path,
+           let worktree = rootProject.worktrees.first(where: { $0.path == activeProject.path }) {
+            return worktree.branch
+        }
+        return viewModel.activeWorkspaceRootCurrentBranchName
+    }
+
+    private func syncTerminalStores() {
+        terminalStoreRegistry.syncRetainedProjectPaths(Set(viewModel.openWorkspaceProjectPaths))
     }
 
     private func warmActiveWorkspace() {
@@ -305,6 +342,47 @@ struct WorkspaceShellView: View {
             sessions: viewModel.openWorkspaceSessions,
             activeProjectPath: viewModel.activeWorkspaceProjectPath
         )
+    }
+
+    private func scheduleVisibleSurfaceReactivation() {
+        surfaceReactivationTask?.cancel()
+        surfaceReactivationTask = Task { @MainActor in
+            await Task.yield()
+            reactivateVisibleTerminalSurfaces()
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else {
+                return
+            }
+            reactivateVisibleTerminalSurfaces()
+            surfaceReactivationTask = nil
+        }
+    }
+
+    private func reactivateVisibleTerminalSurfaces() {
+        guard viewModel.isWorkspacePresented,
+              let activeProjectPath = viewModel.activeWorkspaceProjectPath,
+              let session = viewModel.openWorkspaceSessions.first(where: { $0.projectPath == activeProjectPath }),
+              let selectedTab = session.controller.selectedTab
+        else {
+            return
+        }
+
+        let focusedPaneID = session.controller.selectedPane?.id
+        let store = terminalStoreRegistry.store(for: activeProjectPath)
+        for pane in selectedTab.leaves {
+            guard let selectedItem = pane.selectedItem,
+                  selectedItem.isTerminal
+            else {
+                continue
+            }
+            let model = store.model(for: selectedItem, in: pane)
+            let isFocusedPane = focusedPaneID == pane.id
+            model.syncSurfaceActivity(isVisible: true, isFocused: isFocusedPane)
+            model.applyLatestModelState(preferredFocus: isFocusedPane)
+            if isFocusedPane {
+                model.restoreWindowResponderIfNeeded(preferredFocus: true)
+            }
+        }
     }
 
     private var workspacePaneSnapshotProvider: WorkspacePaneSnapshotProvider {
@@ -324,9 +402,9 @@ struct WorkspaceShellView: View {
     }
 
     private var displayedWorkspaceSession: OpenWorkspaceSessionState? {
-        if let activeProjectPath = viewModel.activeWorkspaceProjectPath,
-           let activeSession = viewModel.openWorkspaceSessions.first(where: { $0.projectPath == activeProjectPath }) {
-            return activeSession
+        if let mountedProjectPath = viewModel.mountedWorkspaceProjectPath,
+           let mountedSession = viewModel.openWorkspaceSessions.first(where: { $0.projectPath == mountedProjectPath }) {
+            return mountedSession
         }
         return viewModel.openWorkspaceSessions.first
     }

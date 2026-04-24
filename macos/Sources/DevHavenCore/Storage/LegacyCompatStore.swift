@@ -82,6 +82,12 @@ public final class LegacyCompatStore {
         try saveAppStateDocument(document)
     }
 
+    public func updateSecurityScopedBookmarks(_ records: [SecurityScopedBookmarkRecord]) throws {
+        var document = try loadAppStateDocument()
+        document.root["securityScopedBookmarks"] = try makeJSONArray(from: records)
+        try saveAppStateDocument(document)
+    }
+
     public func updateSettings(_ settings: AppSettings) throws {
         var document = try loadAppStateDocument()
         let encodedSettings = try makeJSONObject(from: settings)
